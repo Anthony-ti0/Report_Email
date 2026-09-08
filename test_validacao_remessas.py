@@ -6,6 +6,26 @@ import pandas as pd
 import validacao_remessas as vr
 
 
+class TestGetMentionUserIdsForDate:
+    def test_uses_semana_list_monday_through_saturday(self, monkeypatch):
+        monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS_SEMANA", "115541847387315479534,103237789261244417964")
+        monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS_DOMINGO", "108463025923835194261")
+
+        # 2026-09-07 é segunda-feira, 2026-09-12 é sábado
+        for dia in (date(2026, 9, 7), date(2026, 9, 12)):
+            assert vr.get_mention_user_ids_for_date(dia) == [
+                "115541847387315479534",
+                "103237789261244417964",
+            ]
+
+    def test_uses_domingo_list_on_sunday(self, monkeypatch):
+        monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS_SEMANA", "111,222")
+        monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS_DOMINGO", "108463025923835194261")
+
+        # 2026-09-06 é domingo
+        assert vr.get_mention_user_ids_for_date(date(2026, 9, 6)) == ["108463025923835194261"]
+
+
 class TestAlreadySentToday:
     def test_false_when_marker_missing(self, tmp_path):
         marker = tmp_path / "marker.txt"
@@ -259,7 +279,8 @@ class TestBuildValidationGchatMessage:
 
 
 def _setup_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS", "111")
+    monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS_SEMANA", "111")
+    monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS_DOMINGO", "222")
     monkeypatch.setenv("MEF_SMTP_USER", "user@example.com")
     monkeypatch.setenv("MEF_SMTP_PASSWORD", "pwd")
     monkeypatch.setenv("MEF_VALIDATION_EMAIL_TO", "dest@example.com")

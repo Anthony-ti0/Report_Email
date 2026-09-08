@@ -217,6 +217,16 @@ def build_validation_gchat_message(reconciliation: dict, mention_user_ids: list[
     return {"text": f"{corpo}\n\n{mencoes}"}
 
 
+def get_mention_user_ids_for_date(reference_date: date) -> list[str]:
+    """Escolhe quem marcar no Chat conforme o dia da semana.
+
+    Domingo (weekday() == 6) usa MEF_GCHAT_MENTION_USER_IDS_DOMINGO;
+    segunda a sábado usa MEF_GCHAT_MENTION_USER_IDS_SEMANA.
+    """
+    env_var = "MEF_GCHAT_MENTION_USER_IDS_DOMINGO" if reference_date.weekday() == 6 else "MEF_GCHAT_MENTION_USER_IDS_SEMANA"
+    return [user_id.strip() for user_id in os.environ[env_var].split(",") if user_id.strip()]
+
+
 def already_sent_today(marker_path: Path, reference_date: date) -> bool:
     """Confere se o relatório de hoje já foi enviado (arquivo-marcador com a data)."""
     if not marker_path.exists():
@@ -271,11 +281,7 @@ def main(force: bool = False) -> None:
         print("Importação ainda não concluída (ou nada recebido ainda) — aguardando próxima checagem.")
         return
 
-    mention_user_ids = [
-        user_id.strip()
-        for user_id in os.environ["MEF_GCHAT_MENTION_USER_IDS"].split(",")
-        if user_id.strip()
-    ]
+    mention_user_ids = get_mention_user_ids_for_date(reference_date)
 
     if not concluido:
         # Fim da janela e ainda incompleto: só avisa no Chat, sem gerar e-mail
