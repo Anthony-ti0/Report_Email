@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# PyCharm
+.idea/
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+*.log
+
+# Arquivos temporários/gerados
+*.tmp
+
+# Evidências geradas
+*.png
+
+# Sistema operacional
+.DS_Store
+Thumbs.db

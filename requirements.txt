@@ -1,0 +1,6 @@
+pyodbc
+pandas
+matplotlib
+pytest
+requests
+python-dotenv
