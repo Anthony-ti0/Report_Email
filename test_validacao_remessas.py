@@ -2,7 +2,6 @@ from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 import validacao_remessas as vr
 

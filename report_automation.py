@@ -29,6 +29,7 @@ HEADER_TEXT = "MEF_Dados_Importações_Remessas"
 
 
 def get_connection_string() -> str:
+    """Monta a connection string do SQL Server a partir das variáveis de ambiente (.env)."""
     return (
         "DRIVER={SQL Server};"
         f"SERVER={os.environ['MEF_DB_SERVER']},1433;"
@@ -39,6 +40,7 @@ def get_connection_string() -> str:
 
 
 def fetch_import_data(connection_string: str) -> pd.DataFrame:
+    """Consulta todos os arquivos já importados no banco (sem filtro de data)."""
     conn = pyodbc.connect(connection_string)
     try:
         df = pd.read_sql(SQL_QUERY, conn)
@@ -50,10 +52,16 @@ def fetch_import_data(connection_string: str) -> pd.DataFrame:
 
 
 def filter_today_unique(df: pd.DataFrame, reference_date: date) -> pd.DataFrame:
+    """Filtra para os arquivos concluídos na data de referência, únicos e ordenados.
+
+    Exclui nomes com CSP_IMP/TIM, mantém só quem terminou (data_termino) na
+    data informada, remove duplicatas (mantendo o primeiro) e ordena do mais
+    recente para o mais antigo.
+    """
     df_filtrado = df[~df["arquivo"].str.contains("CSP_IMP", case=False, na=False)]
     df_filtrado = df_filtrado[~df_filtrado["arquivo"].str.contains("TIM", case=False, na=False)]
-    # data_termino (DATA_IMPORTACAO_FINAL) é quando o arquivo de fato terminou de
-    # importar; arquivos ainda em processamento (data_termino nulo) ficam de fora.
+    # data_termino (DATA_IMPORTACAO_FINAL) é quando o arquivo de fato terminou de importar;
+    # arquivos ainda em processamento (data_termino nulo) ficam de fora.
     df_hoje = df_filtrado[df_filtrado["data_termino"].dt.date == reference_date]
     df_ordenado = df_hoje.sort_values(by="data_termino", ascending=True)
     df_unicos = df_ordenado.drop_duplicates(subset=["arquivo"], keep="first")
@@ -91,6 +99,7 @@ def debug_filter_pipeline(df: pd.DataFrame, reference_date: date) -> dict:
 
 
 def create_report_png(df_data: pd.DataFrame, output_path: str, header_text: str) -> None:
+    """Gera o PNG do relatório diário (arquivo/data_processamento/data_termino)."""
     date_format = "%Y-%m-%d %H:%M:%S"
     df_display = df_data.copy()
 
@@ -143,6 +152,7 @@ def create_report_png(df_data: pd.DataFrame, output_path: str, header_text: str)
 
 
 def build_gchat_message(df_final: pd.DataFrame, mention_user_ids: list[str] | str) -> dict:
+    """Monta a mensagem do Google Chat listando os arquivos importados hoje, marcando os usuários."""
     if isinstance(mention_user_ids, str):
         mention_user_ids = [mention_user_ids]
 
@@ -166,6 +176,7 @@ def build_gchat_message(df_final: pd.DataFrame, mention_user_ids: list[str] | st
 
 
 def send_gchat_notification(webhook_url: str, payload: dict) -> requests.Response:
+    """Envia o payload (montado por build_*_gchat_message) para o webhook do Google Chat."""
     response = requests.post(webhook_url, json=payload, timeout=10)
     response.raise_for_status()
     return response
@@ -181,6 +192,7 @@ def send_email_report_smtp(
     html_body: str,
     image_path: str,
 ) -> None:
+    """Envia e-mail HTML com a imagem do relatório embutida (cid:report_image), via SMTP/STARTTLS."""
     msg = MIMEMultipart("related")
     msg["Subject"] = subject
     msg["From"] = username

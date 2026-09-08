@@ -1,16 +1,4 @@
-<<<<<<< HEAD
-# Python
-__pycache__/
-*.py[cod]
-
-# Virtual Environment
-.venv/
-venv/
-env/
-
-# PyCharm
-.idea/
-
+# Regras específicas do projeto
 # Environment variables
 .env
 .env.*
@@ -24,10 +12,13 @@ env/
 # Evidências geradas
 *.png
 
+# PyCharm
+.idea/
+
 # Sistema operacional
 .DS_Store
 Thumbs.db
-=======
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -86,7 +77,6 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -178,11 +168,10 @@ activemq-data/
 *.sage.py
 
 # Environments
-.env
 .envrc
 .venv
-env/
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
@@ -211,13 +200,6 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
-# PyCharm
-#   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#   and can be added to the global gitignore or merged into this file.  For a more nuclear
-#   option (not recommended) you can uncomment the following to ignore the entire idea folder.
-# .idea/
-
 # Abstra
 #   Abstra is an AI-powered process automation framework.
 #   Ignore directories containing user credentials, local state, and settings.
@@ -225,9 +207,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#   and can be added to the global gitignore or merged into this file. However, if you prefer,
 #   you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 # Temporary file for partial code execution
@@ -246,4 +228,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
->>>>>>> 9c92b67900de0ad850002daedd45ad71e19efe66

@@ -40,19 +40,25 @@ HEADER_TEXT = "MEF_Validação_Recepção_Remessas"
 
 
 def build_drive_folder_path(base_path: str, reference_date: date) -> Path:
+    """Monta o caminho da pasta do dia no Drive: <base>/<ano>/<mês>.MÊS/<dia>."""
     mes_nome = f"{reference_date.month:02d}.{MESES_PT[reference_date.month]}"
     return Path(base_path) / str(reference_date.year) / mes_nome / f"{reference_date.day:02d}"
 
 
 def list_drive_files(folder_path: Path) -> list[str]:
-    # Arquivos ficam em subpastas por código de contratante (ex.: 4360, 4361,
-    # OUTROS), não soltos na pasta do dia — por isso a busca é recursiva.
+    """Lista os nomes dos arquivos recebidos na pasta do dia.
+
+    Busca recursiva porque os arquivos ficam em subpastas por código de
+    contratante (ex.: 4360, 4361, OUTROS), não soltos na pasta do dia.
+    Retorna lista vazia se a pasta ainda não existir.
+    """
     if not folder_path.exists():
         return []
     return sorted(p.name for p in folder_path.rglob("*") if p.is_file())
 
 
 def fetch_validation_data(connection_string: str) -> pd.DataFrame:
+    """Consulta no banco quais arquivos já foram importados hoje (tbimportacao)."""
     conn = pyodbc.connect(connection_string)
     try:
         df = pd.read_sql(VALIDATION_QUERY, conn)
@@ -62,6 +68,11 @@ def fetch_validation_data(connection_string: str) -> pd.DataFrame:
 
 
 def reconcile_files(drive_filenames: list[str], validation_df: pd.DataFrame) -> dict:
+    """Compara arquivos recebidos no Drive com os importados no banco (por nome de arquivo).
+
+    Retorna contagens e as listas de arquivos importados e pendentes (recebidos
+    mas ainda sem registro de importação hoje).
+    """
     imported_basenames = {
         str(nome).replace("/", "\\").split("\\")[-1].strip().lower()
         for nome in validation_df["NOME_ARQUIVO"]
@@ -77,6 +88,11 @@ def reconcile_files(drive_filenames: list[str], validation_df: pd.DataFrame) -> 
 
 
 def build_validation_table(drive_filenames: list[str], validation_df: pd.DataFrame) -> pd.DataFrame:
+    """Monta a tabela ARQUIVO/DATA_PROCESSAMENTO/DATA_TERMINO usada no PNG.
+
+    Cada arquivo recebido no Drive ganha uma linha; se ainda não foi
+    importado, as datas ficam nulas (viram "-" na hora de exibir).
+    """
     lookup: dict[str, tuple] = {}
     for _, row in validation_df.iterrows():
         basename = str(row["NOME_ARQUIVO"]).replace("/", "\\").split("\\")[-1].strip().lower()
@@ -94,6 +110,7 @@ def build_validation_table(drive_filenames: list[str], validation_df: pd.DataFra
 
 
 def create_validation_report_png(table_df: pd.DataFrame, output_path: str, header_text: str) -> None:
+    """Gera o PNG do relatório (proporção 3:4), destacando em vermelho as linhas pendentes."""
     date_format = "%Y-%m-%d %H:%M:%S"
 
     def fmt(value) -> str:
@@ -151,6 +168,7 @@ def create_validation_report_png(table_df: pd.DataFrame, output_path: str, heade
 
 
 def build_validation_email_subject(report_date: date) -> str:
+    """Monta o assunto do e-mail de validação, com a data no formato dd.mm.aaaa."""
     return (
         "Comunicado Importante - MEF - Importação de arquivos - "
         f"Tim Telecobrança - {report_date.strftime('%d.%m.%Y')}"
@@ -158,6 +176,7 @@ def build_validation_email_subject(report_date: date) -> str:
 
 
 def build_validation_email_html_body(reconciliation: dict) -> str:
+    """Monta o corpo HTML do e-mail: resumo da reconciliação + imagem do relatório (cid:report_image)."""
     if reconciliation["pendentes"]:
         pendentes_html = "<br>".join(f"• {p}" for p in reconciliation["pendentes"])
         status_html = (
@@ -179,6 +198,7 @@ def build_validation_email_html_body(reconciliation: dict) -> str:
 
 
 def build_validation_gchat_message(reconciliation: dict, mention_user_ids: list[str]) -> dict:
+    """Monta a mensagem do Google Chat: ✅ sucesso ou ⚠️ pendências, marcando os usuários informados."""
     if reconciliation["pendentes"]:
         lista = "\n".join(f"• {p}" for p in reconciliation["pendentes"])
         corpo = (
@@ -198,17 +218,33 @@ def build_validation_gchat_message(reconciliation: dict, mention_user_ids: list[
 
 
 def already_sent_today(marker_path: Path, reference_date: date) -> bool:
+    """Confere se o relatório de hoje já foi enviado (arquivo-marcador com a data)."""
     if not marker_path.exists():
         return False
     return marker_path.read_text().strip() == reference_date.isoformat()
 
 
 def mark_sent_today(marker_path: Path, reference_date: date) -> None:
+    """Grava a data de hoje no arquivo-marcador, para não reenviar o e-mail no mesmo dia."""
     marker_path.parent.mkdir(parents=True, exist_ok=True)
     marker_path.write_text(reference_date.isoformat())
 
 
 def main(force: bool = False) -> None:
+    """Ponto de entrada do comando: valida, reconcilia e notifica.
+
+    Passos, na ordem:
+    1. Se o e-mail de hoje já foi enviado, encerra sem fazer nada (`already_sent_today`).
+    2. Lista os arquivos recebidos no Drive (`list_drive_files`) e os importados
+       no banco hoje (`fetch_validation_data`), e cruza os dois (`reconcile_files`).
+    3. Se ainda não está tudo importado e não é execução forçada, só loga e
+       aguarda a próxima checagem (pensado para rodar em polling).
+    4. Se está incompleto mas é execução forçada (fim da janela), avisa só no
+       Google Chat — sem gerar e-mail incompleto.
+    5. Se está tudo importado, gera o PNG (`create_validation_report_png`),
+       envia o e-mail (`send_email_report_smtp`) e o Chat, e marca como
+       enviado (`mark_sent_today`), para não duplicar o envio no mesmo dia.
+    """
     connection_string = get_connection_string()
     reference_date = datetime.now().date()
 
