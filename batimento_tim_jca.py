@@ -7,7 +7,7 @@ import pandas as pd
 import pyodbc
 
 from report_automation import get_connection_string, send_gchat_notification
-from validacao_remessas import build_drive_folder_path
+from validacao_remessas import already_sent_today, build_drive_folder_path, mark_sent_today
 
 CREDORES = ["5260", "8660", "6201", "6202", "4360"]
 
@@ -109,6 +109,12 @@ def build_batimento_table(
     return df
 
 
+def credores_pendentes(table_df: pd.DataFrame) -> list[str]:
+    """Credores esperados (CREDORES) que ainda não têm arquivo de remessa na tabela."""
+    credores_presentes = {extract_credor(arquivo) for arquivo in table_df["ARQUIVO"]}
+    return sorted(set(CREDORES) - credores_presentes)
+
+
 def get_batimento_mention_user_ids() -> list[str]:
     """Lista fixa de usuários marcados neste report (independe do dia da semana)."""
     return [
@@ -138,9 +144,32 @@ def build_batimento_gchat_message(table_df: pd.DataFrame, title: str, mention_us
 
 
 def main(force: bool = False) -> None:
-    """Ponto de entrada: consulta o banco, lê os arquivos do Drive e envia o resultado ao Chat."""
+    """Ponto de entrada do comando: identifica arquivos, valida BANCO x DRIVE e notifica.
+
+    Mesmo padrão de execução autônoma do validacao_remessas.main(): pensado
+    para rodar em polling (ex.: a cada poucos minutos via Agendador de
+    Tarefas). Passos, na ordem:
+
+    1. Se o report de hoje já foi enviado, encerra sem fazer nada
+       (`already_sent_today`) — evita duplicidade em reexecuções.
+    2. Identifica os arquivos de remessa recebidos no Drive e consulta o
+       QTDE_REGISTRO já importado no banco para cada um (`build_batimento_table`),
+       validando BANCO x DRIVE por arquivo.
+    3. Só envia o report ao Chat quando os 5 credores esperados (CREDORES)
+       já tiverem arquivo na pasta do dia (`credores_pendentes` vazio) — antes
+       disso, apenas loga e aguarda a próxima checagem. `--force` pula essa
+       espera e envia com o que já tiver chegado.
+    4. Envia o report ao Chat (`build_batimento_gchat_message`, já mostrando
+       ✅/⚠️ por arquivo) e marca como enviado (`mark_sent_today`), para não
+       duplicar o envio no mesmo dia.
+    """
     connection_string = get_connection_string()
     reference_date = datetime.now().date()
+
+    marker_path = Path(os.environ.get("MEF_BATIMENTO_JCA_MARKER_PATH", r"C:\Temp\batimento_jca_enviado.txt"))
+    if already_sent_today(marker_path, reference_date):
+        print(f"Report de {reference_date} já foi enviado hoje — nada a fazer.")
+        return
 
     folder_path = build_drive_folder_path(os.environ["MEF_DRIVE_JCA_PATH"], reference_date)
     drive_files = sorted(p for p in folder_path.rglob("*") if p.is_file()) if folder_path.exists() else []
@@ -152,11 +181,14 @@ def main(force: bool = False) -> None:
         print(table_df)
 
     divergentes = table_df[table_df["QTDE_REGISTRO"] != table_df["QTDE_ARQUIVO"]]
-    if not divergentes.empty and not force:
-        print(f"\n{len(divergentes)} arquivo(s) com divergência:")
+    if not divergentes.empty:
+        print(f"\n{len(divergentes)} arquivo(s) com divergência (serão sinalizados com ⚠️ no report):")
         with pd.option_context("display.max_columns", None, "display.width", None):
             print(divergentes)
-        print("\nRevisar antes de enviar (use --force para enviar mesmo assim).")
+
+    pendentes = credores_pendentes(table_df)
+    if pendentes and not force:
+        print(f"\nAinda faltam arquivos dos credores {pendentes} — aguardando próxima checagem.")
         return
 
     title = build_batimento_title(reference_date)
@@ -164,6 +196,8 @@ def main(force: bool = False) -> None:
     payload = build_batimento_gchat_message(table_df, title, mention_user_ids)
     send_gchat_notification(os.environ["MEF_GCHAT_WEBHOOK_URL"], payload)
     print("Notificação de batimento enviada ao Google Chat.")
+
+    mark_sent_today(marker_path, reference_date)
 
 
 if __name__ == "__main__":

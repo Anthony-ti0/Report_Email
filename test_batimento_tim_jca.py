@@ -117,6 +117,30 @@ class TestBuildBatimentoTable:
         assert df.loc[0, "QTDE_ARQUIVO"] == 2
 
 
+class TestCredoresPendentes:
+    def test_returns_missing_credores_sorted(self):
+        df = pd.DataFrame({"ARQUIVO": ["REMESSA_A_6201", "REMESSA_B_4360"]})
+        assert bj.credores_pendentes(df) == ["5260", "6202", "8660"]
+
+    def test_empty_when_all_credores_present(self):
+        df = pd.DataFrame(
+            {
+                "ARQUIVO": [
+                    "REMESSA_5260",
+                    "REMESSA_8660",
+                    "REMESSA_6201",
+                    "REMESSA_6202",
+                    "REMESSA_4360",
+                ]
+            }
+        )
+        assert bj.credores_pendentes(df) == []
+
+    def test_all_pending_when_table_is_empty(self):
+        df = pd.DataFrame(columns=["ARQUIVO"])
+        assert bj.credores_pendentes(df) == sorted(bj.CREDORES)
+
+
 class TestGetBatimentoMentionUserIds:
     def test_parses_comma_separated_ids(self, monkeypatch):
         monkeypatch.setenv("MEF_GCHAT_MENTION_USER_IDS_BATIMENTO_JCA", "111, 222,333")
