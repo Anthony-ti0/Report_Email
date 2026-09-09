@@ -1,5 +1,6 @@
 import os
 import smtplib
+import sys
 from datetime import datetime, date
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
@@ -17,6 +18,18 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+# As mensagens usam emojis (✅, ⚠️, ↘️) que não existem no codepage padrão do
+# console do Windows em português (cp1252/cp850). Sem isto, um simples
+# print() derruba o script com UnicodeEncodeError assim que a primeira
+# mensagem com emoji é impressa.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
+ODBC_DRIVERS_SUPORTADOS = ("ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server", "SQL Server")
+
 SQL_QUERY = """
     select right([NOME_ARQUIVO], 52) as arquivo,
     [DATA_IMPORTACAO] as data_processamento,
@@ -28,10 +41,27 @@ SQL_QUERY = """
 HEADER_TEXT = "MEF_Dados_Importações_Remessas"
 
 
+def detect_odbc_driver() -> str:
+    """Detecta o primeiro driver ODBC de SQL Server disponível nesta máquina.
+
+    Tenta os drivers modernos primeiro (18, depois 17) e cai para o driver
+    legado "SQL Server" por último, para não quebrar em máquinas que só têm
+    ele instalado. Levanta RuntimeError se nenhum estiver presente.
+    """
+    drivers_disponiveis = pyodbc.drivers()
+    for candidato in ODBC_DRIVERS_SUPORTADOS:
+        if candidato in drivers_disponiveis:
+            return candidato
+    raise RuntimeError(
+        f"Nenhum driver ODBC de SQL Server encontrado nesta máquina. "
+        f"Drivers disponíveis: {drivers_disponiveis}"
+    )
+
+
 def get_connection_string() -> str:
     """Monta a connection string do SQL Server a partir das variáveis de ambiente (.env)."""
     return (
-        "DRIVER={SQL Server};"
+        f"DRIVER={{{detect_odbc_driver()}}};"
         f"SERVER={os.environ['MEF_DB_SERVER']},1433;"
         f"DATABASE={os.environ['MEF_DB_NAME']};"
         f"UID={os.environ['MEF_DB_UID']};"
