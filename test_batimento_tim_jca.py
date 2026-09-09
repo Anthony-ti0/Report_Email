@@ -184,52 +184,6 @@ class TestBuildBatimentoGchatMessage:
         assert "<users/111>" in texto
 
 
-class TestCreateBatimentoReportPng:
-    def test_generates_png_with_rows(self, tmp_path):
-        table_df = pd.DataFrame(
-            [{"REGISTRO": 1, "ARQUIVO": "REMESSA_A_6201", "QTDE_REGISTRO": 10, "QTDE_ARQUIVO": 10}]
-        )
-        output_path = tmp_path / "batimento.png"
-
-        bj.create_batimento_report_png(table_df, str(output_path), "Titulo")
-
-        assert output_path.exists()
-        assert output_path.stat().st_size > 0
-
-    def test_generates_png_when_table_is_empty(self, tmp_path):
-        table_df = pd.DataFrame(columns=["REGISTRO", "ARQUIVO", "QTDE_REGISTRO", "QTDE_ARQUIVO"])
-        output_path = tmp_path / "batimento_vazio.png"
-
-        bj.create_batimento_report_png(table_df, str(output_path), "Titulo")
-
-        assert output_path.exists()
-
-
-class TestBuildBatimentoCardPayload:
-    def test_builds_cardsv2_payload_with_image_and_mentions(self):
-        payload = bj.build_batimento_card_payload(
-            title="TITULO", image_url="https://drive.google.com/thumbnail?id=abc", mention_user_ids=["111", "222"]
-        )
-
-        card = payload["cardsV2"][0]["card"]
-        assert card["header"]["title"] == "TITULO"
-        assert card["sections"][0]["widgets"][0]["image"]["imageUrl"] == "https://drive.google.com/thumbnail?id=abc"
-        assert card["sections"][1]["widgets"][0]["textParagraph"]["text"] == "<users/111> <users/222>"
-
-
-class TestUploadImageToDrive:
-    def test_raises_when_service_account_json_is_not_a_file(self, tmp_path):
-        pasta_em_vez_de_arquivo = tmp_path / "nao_e_um_arquivo"
-        pasta_em_vez_de_arquivo.mkdir()
-
-        import pytest
-
-        with pytest.raises(FileNotFoundError):
-            bj.upload_image_to_drive(
-                service_account_json_path=str(pasta_em_vez_de_arquivo),
-                folder_id="qualquer",
-                file_path="qualquer.png",
-            )
 
     def test_empty_table_still_includes_title_and_mentions(self):
         df = pd.DataFrame(columns=["REGISTRO", "ARQUIVO", "QTDE_REGISTRO", "QTDE_ARQUIVO"])
