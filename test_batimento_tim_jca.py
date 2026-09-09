@@ -23,6 +23,13 @@ class TestExtractCredor:
     def test_returns_none_when_no_trailing_digits(self):
         assert bj.extract_credor("REMESSA_CYBER_ASSESSORIA_SEM_CODIGO") is None
 
+    def test_finds_known_credor_with_compound_extension(self):
+        """Formato real dos arquivos no SFTP: compactados em .txt.gz (dupla extensão)."""
+        assert bj.extract_credor("REMESSA_CYBER_ASSESSORIA_12082026234051_014_6202.txt.gz") == "6202"
+
+    def test_finds_newly_added_credor_4361(self):
+        assert bj.extract_credor("REMESSA_CYBER_ASSESSORIA_09082026222424_005_4361.txt.gz") == "4361"
+
 
 class TestIsRemessaFile:
     def test_true_for_remessa_with_known_credor(self):
@@ -120,7 +127,7 @@ class TestBuildBatimentoTable:
 class TestCredoresPendentes:
     def test_returns_missing_credores_sorted(self):
         df = pd.DataFrame({"ARQUIVO": ["REMESSA_A_6201", "REMESSA_B_4360"]})
-        assert bj.credores_pendentes(df) == ["5260", "6202", "8660"]
+        assert bj.credores_pendentes(df) == ["4361", "5260", "6202", "8660"]
 
     def test_empty_when_all_credores_present(self):
         df = pd.DataFrame(
@@ -131,6 +138,7 @@ class TestCredoresPendentes:
                     "REMESSA_6201",
                     "REMESSA_6202",
                     "REMESSA_4360",
+                    "REMESSA_4361",
                 ]
             }
         )
@@ -139,6 +147,19 @@ class TestCredoresPendentes:
     def test_all_pending_when_table_is_empty(self):
         df = pd.DataFrame(columns=["ARQUIVO"])
         assert bj.credores_pendentes(df) == sorted(bj.CREDORES)
+
+
+class TestCredoresChegadosSftp:
+    def test_extracts_credores_from_valid_remessa_files(self):
+        arquivos = ["REMESSA_X_012_6202.txt", "REMESSA_Y_005_4360.txt"]
+        assert bj.credores_chegados_sftp(arquivos) == {"6202", "4360"}
+
+    def test_ignores_non_remessa_files(self):
+        arquivos = ["EXC_BAI_CYBER_ASSESSORIA_07092026222920_010_6201.txt", "REMESSA_X_012_6202.txt"]
+        assert bj.credores_chegados_sftp(arquivos) == {"6202"}
+
+    def test_empty_list_returns_empty_set(self):
+        assert bj.credores_chegados_sftp([]) == set()
 
 
 class TestGetBatimentoMentionUserIds:

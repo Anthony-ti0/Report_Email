@@ -8,6 +8,7 @@ matplotlib.use("Agg")  # headless: script only saves PNG, never shows a window
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import paramiko
 import pyodbc
 from google.oauth2 import service_account
 from googleapiclient.discovery import build as build_google_api_service
@@ -16,7 +17,7 @@ from googleapiclient.http import MediaFileUpload
 from report_automation import get_connection_string, send_gchat_notification
 from validacao_remessas import already_sent_today, build_drive_folder_path, mark_sent_today
 
-CREDORES = ["5260", "8660", "6201", "6202", "4360"]
+CREDORES = ["5260", "8660", "6201", "6202", "4360", "4361"]
 
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -39,10 +40,12 @@ def build_batimento_title(reference_date: date) -> str:
 def extract_credor(filename: str) -> str | None:
     """Extrai o código do credor (4 dígitos) do final do nome do arquivo.
 
-    Ex.: REMESSA_CYBER_ASSESSORIA_070920262920_012_6202 -> "6202".
+    Ex.: REMESSA_CYBER_ASSESSORIA_070920262920_012_6202 -> "6202"; também
+    aceita extensões compostas, ex.: "..._012_6202.txt.gz" (formato real dos
+    arquivos no SFTP, compactados) -> "6202".
     Retorna None se nenhum código conhecido (CREDORES) for encontrado.
     """
-    match = re.search(r"(\d{4})(?:\.[^.]+)?$", filename)
+    match = re.search(r"(\d{4})(?:\.\w+)*$", filename)
     if match and match.group(1) in CREDORES:
         return match.group(1)
     return None
@@ -122,6 +125,40 @@ def credores_pendentes(table_df: pd.DataFrame) -> list[str]:
     """Credores esperados (CREDORES) que ainda não têm arquivo de remessa na tabela."""
     credores_presentes = {extract_credor(arquivo) for arquivo in table_df["ARQUIVO"]}
     return sorted(set(CREDORES) - credores_presentes)
+
+
+def list_sftp_files(
+    host: str, port: int, username: str, password: str, remote_path: str, reference_date: date
+) -> list[str]:
+    """Lista os arquivos da pasta remota do SFTP modificados em `reference_date`.
+
+    Filtra por `st_mtime` (data de modificação remota) porque a pasta
+    acumula milhares de arquivos históricos de vários processos, não só os
+    de hoje — sem esse filtro, todo credor que já mandou arquivo alguma vez
+    apareceria pra sempre como "já chegou", mesmo com o arquivo de semanas
+    atrás. É só leitura (listdir_attr) — não baixa nem altera nada no
+    servidor remoto.
+    """
+    ssh_client = paramiko.SSHClient()
+    ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh_client.connect(hostname=host, port=port, username=username, password=password, timeout=15)
+    try:
+        sftp = ssh_client.open_sftp()
+        try:
+            return [
+                entrada.filename
+                for entrada in sftp.listdir_attr(remote_path)
+                if datetime.fromtimestamp(entrada.st_mtime).date() == reference_date
+            ]
+        finally:
+            sftp.close()
+    finally:
+        ssh_client.close()
+
+
+def credores_chegados_sftp(sftp_filenames: list[str]) -> set[str]:
+    """Credores cujo arquivo de remessa já apareceu na pasta do SFTP."""
+    return {extract_credor(nome) for nome in sftp_filenames if is_remessa_file(nome)}
 
 
 def get_batimento_mention_user_ids() -> list[str]:
@@ -242,7 +279,37 @@ def build_batimento_card_payload(title: str, image_url: str, mention_user_ids: l
     }
 
 
-def main(force: bool = False) -> None:
+def _checar_chegada_sftp(reference_date: date) -> None:
+    """Consulta o SFTP e loga quais credores esperados ainda não apareceram lá hoje.
+
+    Só informativo — não bloqueia o envio do report (decisão do usuário:
+    "seguir com os outros processos mesmo que falte algum credor"). Uma
+    falha de conexão com o SFTP é logada e ignorada, nunca derruba o report:
+    a contagem de linhas continua vindo do arquivo físico já sincronizado
+    na pasta do Drive, então o report sai mesmo sem confirmação do SFTP.
+    """
+    try:
+        sftp_filenames = list_sftp_files(
+            host=os.environ["MEF_SFTP_HOST"],
+            port=int(os.environ.get("MEF_SFTP_PORT", "22")),
+            username=os.environ["MEF_SFTP_USERNAME"],
+            password=os.environ["MEF_SFTP_PASSWORD"],
+            remote_path=os.environ.get("MEF_SFTP_REMOTE_PATH", "/tim_files/Recebidos"),
+            reference_date=reference_date,
+        )
+    except Exception as e:
+        print(f"[AVISO] Falha ao consultar o SFTP ({e}) — seguindo só com o que já está sincronizado no Drive.")
+        return
+
+    chegados = credores_chegados_sftp(sftp_filenames)
+    pendentes_sftp = sorted(set(CREDORES) - chegados)
+    if pendentes_sftp:
+        print(f"Ainda sem sinal no SFTP para os credores {pendentes_sftp} — seguindo mesmo assim com o que já chegou.")
+    else:
+        print("Todos os credores esperados já apareceram no SFTP.")
+
+
+def main() -> None:
     """Ponto de entrada do comando: identifica arquivos, valida BANCO x DRIVE e notifica.
 
     Mesmo padrão de execução autônoma do validacao_remessas.main(): pensado
@@ -251,16 +318,15 @@ def main(force: bool = False) -> None:
 
     1. Se o report de hoje já foi enviado, encerra sem fazer nada
        (`already_sent_today`) — evita duplicidade em reexecuções.
-    2. Identifica os arquivos de remessa recebidos no Drive e consulta o
+    2. Confere no SFTP quais credores esperados já chegaram (`_checar_chegada_sftp`)
+       — só informativo, não bloqueia o restante do processo.
+    3. Identifica os arquivos de remessa recebidos no Drive e consulta o
        QTDE_REGISTRO já importado no banco para cada um (`build_batimento_table`),
        validando BANCO x DRIVE por arquivo.
-    3. Só envia o report ao Chat quando os 5 credores esperados (CREDORES)
-       já tiverem arquivo na pasta do dia (`credores_pendentes` vazio) — antes
-       disso, apenas loga e aguarda a próxima checagem. `--force` pula essa
-       espera e envia com o que já tiver chegado.
-    4. Envia o report ao Chat (`build_batimento_gchat_message`, já mostrando
-       ✅/⚠️ por arquivo) e marca como enviado (`mark_sent_today`), para não
-       duplicar o envio no mesmo dia.
+    4. Envia o report ao Chat com o que já tiver chegado, mesmo que falte
+       algum credor (`build_batimento_gchat_message`, já mostrando ✅/⚠️ por
+       arquivo), e marca como enviado (`mark_sent_today`), para não duplicar
+       o envio no mesmo dia.
     """
     connection_string = get_connection_string()
     reference_date = datetime.now().date()
@@ -269,6 +335,8 @@ def main(force: bool = False) -> None:
     if already_sent_today(marker_path, reference_date):
         print(f"Report de {reference_date} já foi enviado hoje — nada a fazer.")
         return
+
+    _checar_chegada_sftp(reference_date)
 
     folder_path = build_drive_folder_path(os.environ["MEF_DRIVE_JCA_PATH"], reference_date)
     drive_files = sorted(p for p in folder_path.rglob("*") if p.is_file()) if folder_path.exists() else []
@@ -285,10 +353,9 @@ def main(force: bool = False) -> None:
         with pd.option_context("display.max_columns", None, "display.width", None):
             print(divergentes)
 
-    pendentes = credores_pendentes(table_df)
-    if pendentes and not force:
-        print(f"\nAinda faltam arquivos dos credores {pendentes} — aguardando próxima checagem.")
-        return
+    pendentes_drive = credores_pendentes(table_df)
+    if pendentes_drive:
+        print(f"Credores ainda sem arquivo sincronizado no Drive: {pendentes_drive} — enviando mesmo assim.")
 
     title = build_batimento_title(reference_date)
     mention_user_ids = get_batimento_mention_user_ids()
@@ -299,8 +366,8 @@ def main(force: bool = False) -> None:
     mark_sent_today(marker_path, reference_date)
 
 
-def main_com_imagem(force: bool = False) -> None:
-    """Variante de TESTE do main(): mesma espera/dedup, mas envia o report como
+def main_com_imagem() -> None:
+    """Variante de TESTE do main(): mesmo dedup, mas envia o report como
     CardsV2 com uma imagem, em vez do texto por arquivo
     (build_batimento_gchat_message). Usa um marcador de data separado
     (MEF_BATIMENTO_JCA_IMG_MARKER_PATH) para não interferir no fluxo de texto
@@ -324,6 +391,8 @@ def main_com_imagem(force: bool = False) -> None:
         print(f"Report (imagem) de {reference_date} já foi enviado hoje — nada a fazer.")
         return
 
+    _checar_chegada_sftp(reference_date)
+
     folder_path = build_drive_folder_path(os.environ["MEF_DRIVE_JCA_PATH"], reference_date)
     drive_files = sorted(p for p in folder_path.rglob("*") if p.is_file()) if folder_path.exists() else []
 
@@ -332,11 +401,6 @@ def main_com_imagem(force: bool = False) -> None:
 
     with pd.option_context("display.max_columns", None, "display.width", None):
         print(table_df)
-
-    pendentes = credores_pendentes(table_df)
-    if pendentes and not force:
-        print(f"\nAinda faltam arquivos dos credores {pendentes} — aguardando próxima checagem.")
-        return
 
     title = build_batimento_title(reference_date)
     output_png_path = os.environ.get("MEF_BATIMENTO_JCA_PNG_PATH") or r"C:\Temp\BATIMENTO_TIM_JCA.png"
@@ -365,6 +429,6 @@ if __name__ == "__main__":
     import sys
 
     if "--cardv2" in sys.argv:
-        main_com_imagem(force="--force" in sys.argv)
+        main_com_imagem()
     else:
-        main(force="--force" in sys.argv)
+        main()
