@@ -301,12 +301,18 @@ def main(force: bool = False) -> None:
 
 def main_com_imagem(force: bool = False) -> None:
     """Variante de TESTE do main(): mesma espera/dedup, mas envia o report como
-    CardsV2 com a imagem do PNG hospedada no Google Drive, em vez do texto por
-    arquivo (build_batimento_gchat_message). Usa um marcador de data separado
+    CardsV2 com uma imagem, em vez do texto por arquivo
+    (build_batimento_gchat_message). Usa um marcador de data separado
     (MEF_BATIMENTO_JCA_IMG_MARKER_PATH) para não interferir no fluxo de texto
     já agendado em produção — as duas variantes podem coexistir sem conflito.
 
-    Requer GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON e GOOGLE_DRIVE_FOLDER_ID no .env.
+    A URL da imagem tem duas origens possíveis:
+    - MEF_BATIMENTO_JCA_IMAGE_URL setada no .env: usa essa URL diretamente,
+      sem subir nada pro Drive — pensado pra testar o envio do CardsV2 antes
+      de ter a conta de serviço do Drive configurada (você sobe o PNG
+      manualmente em algum lugar público e cola o link aqui).
+    - Sem essa variável: sobe o PNG pro Drive via upload_image_to_drive,
+      exigindo GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON e GOOGLE_DRIVE_FOLDER_ID.
     """
     connection_string = get_connection_string()
     reference_date = datetime.now().date()
@@ -336,12 +342,16 @@ def main_com_imagem(force: bool = False) -> None:
     output_png_path = os.environ.get("MEF_BATIMENTO_JCA_PNG_PATH") or r"C:\Temp\BATIMENTO_TIM_JCA.png"
     create_batimento_report_png(table_df, output_png_path, title)
 
-    image_url = upload_image_to_drive(
-        service_account_json_path=os.environ["GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"],
-        folder_id=os.environ["GOOGLE_DRIVE_FOLDER_ID"],
-        file_path=output_png_path,
-    )
-    print(f"Imagem publicada no Drive: {image_url}")
+    image_url = os.environ.get("MEF_BATIMENTO_JCA_IMAGE_URL")
+    if image_url:
+        print(f"Usando URL de imagem fornecida manualmente (sem upload ao Drive): {image_url}")
+    else:
+        image_url = upload_image_to_drive(
+            service_account_json_path=os.environ["GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"],
+            folder_id=os.environ["GOOGLE_DRIVE_FOLDER_ID"],
+            file_path=output_png_path,
+        )
+        print(f"Imagem publicada no Drive: {image_url}")
 
     mention_user_ids = get_batimento_mention_user_ids()
     payload = build_batimento_card_payload(title, image_url, mention_user_ids)
