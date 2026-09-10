@@ -4,4 +4,3 @@ matplotlib
 pytest
 requests
 python-dotenv
-paramiko
